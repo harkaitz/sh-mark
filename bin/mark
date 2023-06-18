@@ -1,0 +1,117 @@
+#!/bin/sh -e
+#L:  MIT License
+#L:
+#l:  Copyright (c) 2023 Harkaitz Agirre, harkaitz.aguirre@gmail.com
+#L:
+#L:  Permission is hereby granted, free of charge, to any person obtaining a copy
+#L:  of this software and associated documentation files (the "Software"), to deal
+#L:  in the Software without restriction, including without limitation the rights
+#L:  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#L:  copies of the Software, and to permit persons to whom the Software is
+#L:  furnished to do so, subject to the following conditions:
+#L:
+#L:  The above copyright notice and this permission notice shall be included in all
+#L:  copies or substantial portions of the Software.
+#L:
+#L:  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#L:  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#L:  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#L:  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#L:  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#L:  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#L:  SOFTWARE.
+##:
+#h: Usage: mark [OPTS...]
+#h:
+#h: Categorize files using MD5 hash.
+#h:
+#h:     -V       : Show configuration.
+#h:     -C MARK  : Create new MARK.
+#h:     -L       : List marks.
+#h:
+#h:     -l FILES...      : View marks of files.
+#h:     -a MARK FILES... : Mark files.
+#h:     -f MARK FILES... : List files with mark.
+#h:     -d FILES...      : Delete marks of files.
+#h:
+#h:     -p FILES...      : Mark files as "processed".
+#h:     -t FILES...      : Mark files as "trash".
+##:
+mark() {
+    local OPTIND optopt ops= mark_a= mark_f=
+    ## Parse command line arguments.
+    while getopts "VC:Lla:f:dpt" optopt; do
+        ops="${ops}${optopt}"
+        case $optopt in
+            C)  touch "${MARK_DIRECTORY}/${OPTARG}"   ;;
+            L)  mark_files -exec 'basename' '{}' ';'  ;;
+            a)  mark_a="${OPTARG}"                    ;;
+            f)  mark_f="${OPTARG}"                    ;;
+            p)  touch "${MARK_DIRECTORY}/processed"   ;;
+            t)  touch "${MARK_DIRECTORY}/trash"       ;;
+            \?) return 1;;
+        esac
+    done
+    shift $(( $OPTIND - 1 ))
+    ## Operations.
+    case "${ops}" in *V*) echo "MARK_DIRECTORY : ${MARK_DIRECTORY}";; esac
+    case "${ops}" in *l*) mark_list "$@"               ;; esac
+    case "${ops}" in *a*) mark_add "${mark_a}" "$@"    ;; esac
+    case "${ops}" in *d*) mark_del "$@"                ;; esac
+    case "${ops}" in *p*) mark_add processed "$@"      ;; esac
+    case "${ops}" in *t*) mark_add trash     "$@"      ;; esac
+    case "${ops}" in *f*) mark_filter "${mark_f}" "$@" ;; esac
+}
+## -------------------------------------------------------------------
+mark_files() {
+    find "${MARK_DIRECTORY}" -mindepth 1 -maxdepth 1 -type f "$@"
+}
+mark_list() {
+    md5sum "$@" | while read -r hash file; do
+        mark="$(grep -R -l -x -F "${hash}" "${MARK_DIRECTORY}" | head -n 1 | xargs -n 1 -r basename)"
+        printf '%-20s %s\n' "${mark:-none}" "${file}"
+    done
+}
+mark_add() {
+    local mark_file="${MARK_DIRECTORY}/$1"
+    if test ! -f "${mark_file}"; then
+        echo >&2 "error: $1: The mark does not exist."
+        return 1
+    fi
+    shift
+    md5sum "$@" | cut -d ' ' -f 1 >> "${mark_file}"
+}
+mark_del() {
+    local sed="$(md5sum "$@" | sed 's|^\([^ ]*\) .*|/^\1$/d|')"
+    mark_files -exec 'sed' '-i' "${sed}" '{}' ';'
+}
+mark_filter() {
+    local mark_file="${MARK_DIRECTORY}/$1"
+    if test ! -f "${mark_file}"; then
+        return 0
+    fi
+    shift
+    md5sum "$@" | while read -r hash file; do
+        if grep -q -x -F "${hash}" "${mark_file}"; then
+            printf '%s\n' "${file}"
+        fi
+    done
+}
+
+
+
+## -------------------------------------------------------------------
+MARK_DIRECTORY="${MARK_DIRECTORY:-${HOME}/.mark}"
+if test @"$(basename "$0")" = @"mark";then
+    case "${1}" in
+        ''|-h|--help)
+            sed -n 's/^ *#h: \{0,1\}//p' "$0"
+            echo ""
+            sed -n 's/^ *#l: \{0,2\}//p' "$0"
+            ;;
+        *)
+            mark "$@"
+            exit 0
+            ;;
+    esac
+fi
